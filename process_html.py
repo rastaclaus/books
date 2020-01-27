@@ -3,41 +3,25 @@ from collections import namedtuple
 import re
 
 from bs4 import BeautifulSoup as Bs
+from html2tex import HabrBook, Lstlisting, Section, Subsection, Command
 
 DEBUG = True
 
-Tag = namedtuple('Tag', 'begin end')
 TAGS = {
-    'h1': Tag("\\title{", "}"),
-    'h2': Tag("\\chapter{", "}"),
-    'h3': Tag("\\section{", "}"),
-    'div': Tag("", ""),
-    'strong': Tag(" \\textbf{", "}"),
-    'p': Tag("\n", "\n"),
-    'pre': Tag("\n\\begin{lstlisting}\n", "\n\\end{lstlisting}\n"),
-    'code': Tag(" \\lstinline{", '} '),
-    'codein': Tag("", ''),
-    'a': Tag("\ ", "\ "),
 }
 
-def process_tag(tag, inner=False):
-    if tag.name == 'code' and tag.parent.name == 'pre':
-        tag.name = 'codein'
-    tex = TAGS.get(tag.name)
-    if tex:
-        print(tex.begin, end='')
+def process_tag(doc, tag, inner=False):
+    handler = TAGS.get(tag.name)
+    if handler:
+        print(handler(tag))
     else:
-        print('process tag', tag.name)
+        print('unknown tag', tag.name)
 
     for child in tag:
         if child.name:
-            process_tag(child)
+            process_tag(doc, child)
         elif child.string.strip():
             process_string(child)
-    if tex:
-        print(tex.end)
-    else:
-        print('end process tag', tag.name)
 
 def process_string(tag):
     print(tag.string.strip(), end='')
