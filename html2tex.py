@@ -1,11 +1,13 @@
 # pylint: disable=missing-docstring, too-many-ancestors
+import re
+
 from urllib.error import HTTPError
 from urllib.request import urlretrieve
 from pathlib import Path
 
 from bs4 import BeautifulSoup as Bs
 
-from pylatex import Document, Section, Subsection, Figure, SubFigure
+from pylatex import Document, Section, Subsection, Figure, SubFigure, Itemize
 from pylatex.base_classes import (
         Environment, Arguments, ContainerCommand, Command)
 from pylatex.package import Package
@@ -19,12 +21,18 @@ MEDIA='media'
 
 DEBUG = True
 
+RUALPHA = re.compile('[А-Яа-я]')
+
+
 LST_COMMANDS = NoEscape(
     "\\lstset{%\n"
     "\tbackgroundcolor=\\color{white},\n"
     "\tbasicstyle=\\footnotesize,\n"
     "\tbreakatwhitespace=false,\n"
     "\tbreaklines=true,\n"
+    "\tinputencoding=utf8,\n"
+    "\textendedchars=true,\n"
+    "\tescapeinside={\\%*}{*)},\n"
     "}\n"
 )
 
@@ -40,14 +48,40 @@ PG_COMMANDS = NoEscape(
     "\\newfontfamily{\\cyrillicfontrm}{Times New Roman}\n"
     "\\newfontfamily{\\cyrillicfonttt}{Source Code Pro}\n"
     "\\newfontfamily{\\cyrillicfontsf}{Arial}\n"
+    "\\emergencystretch=25pt\n"
 )
 
-class Lstlisting(Environment):
-    escape = False
-    content_separator = '\n'
+GLOSSARY = {
+        'p': 'par',
+        'em': 'emph',
+        'blockquote': 'emph'}
 
-class Footnote(ContainerCommand):
-    _latex_name = "footnote"
+class Lstlisting(Environment):
+    content_separator = '\n'
+    escape = False
+
+class FlatContainer(ContainerCommand):
+    def __init__(self, name, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._latex_name = name
+        self.content_separator = " "
+
+    def __repr__(self):
+        return "<FlatContainer>"
+
+    def dumps(self):
+        content = self.dumps_content()
+        if not content.strip():
+            return ''
+        result = ''
+        start = Command(self.latex_name, arguments=self.arguments, options=self.options)
+        result += start.dumps() + '{%\n'
+        if content != '':
+            result += content + '}\n'
+        else:
+            result += '}%\n'
+        return result
+
 
 class HabrBook(Document):
     packages = [
@@ -55,11 +89,12 @@ class HabrBook(Document):
         Package('polyglossia'),
         Package('color'),
         Package('listings'),
-        Package('hyperref')
+        Package('hyperref'),
+        Package('float'),
     ]
 
-    def __init__(self):
-        super().__init__(fontenc="T2A")
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.preamble.append(PG_COMMANDS)
         self.preamble.append("")
         self.preamble.append(LST_COMMANDS)
@@ -72,10 +107,17 @@ def tag_handler(name):
         return decorate
     return handle
 
+def process_string(parent, tag):
+    text = tag.string.strip()
+    if not parent._latex_name == 'document' and not check_cyrillic(text):
+        parent.append(NoEscape(f"\\begin{{english}}escape_latex({text})\\end{{english}}"))
+    else:
+        parent.append(text)
+
 def process_tag(parent, tag):
     if tag.name is None:
         if tag.string.strip():
-            process_string(parent, tag.string)
+            process_string(parent, tag)
         return
     handler = TAGS.get(tag.name)
     if handler:
@@ -100,9 +142,6 @@ def download_image(image_url):
     return media/imgfile
 
 
-def process_string(parent, navstr):
-    parent.append(navstr)
-
 @tag_handler('h1')
 def h1(doc, tag):
     doc.preamble.append(Command('title', tag.text.strip()))
@@ -114,22 +153,19 @@ def h2(doc, tag):
 
 @tag_handler('h3')
 def h3(doc, tag):
-    doc.append(Subsection(tag.text.strip()))
+    doc.append(Subsection(tag.text.strip(), label=False))
 
+@tag_handler('em')
 @tag_handler('p')
-def par(parent, tag):
-    par = []
-    processed_par = []
-    parent.append(Command('par'))
+@tag_handler('blockquote')
+def line_container(parent, tag):
+    latex_name = GLOSSARY.get(tag.name)
+    if latex_name is None:
+        return
+    container = FlatContainer(latex_name)
     for child in tag:
-        process_tag(par, child)
-    for child in par:
-        if hasattr(child, 'dumps'):
-            processed_par.append(child.dumps())
-        else:
-            processed_par.append(child)
-    parent.append(NoEscape(''.join(processed_par)))
-
+        process_tag(container, child)
+    parent.append(container)
 
 @tag_handler('pre')
 def pre(parent, tag):
@@ -137,14 +173,23 @@ def pre(parent, tag):
         for child in tag:
             process_tag(parent, child)
 
+def check_cyrillic(text):
+    return bool(RUALPHA.search(text))
+
+
 @tag_handler('code')
 def code(parent, tag):
     if tag.parent.name == 'pre':
         for child in tag:
             process_tag(parent, child)
     else:
-        text = tag.string
-        parent.append(f"{{\\footnotesize\\texttt{{{escape_latex(text)}}}}}")
+        text = tag.string.strip()
+        if check_cyrillic(text):
+            parent.append(bold(text))
+        else:
+            #parent.append(NoEscape(f"\\lstinline|{text}|"))
+            #parent.append(NoEscape(f"\\begin{{english}}\\texttt{{{escape_latex(text)}}}\\end{{english}}"))
+            parent.append(NoEscape(f"\\begin{{english}}\\lstinline|{text}|\\end{{english}}"))
 
 @tag_handler('div')
 def div(parent, tag):
@@ -157,30 +202,42 @@ def strong(parent, tag):
 
 @tag_handler('a')
 def href(parent, tag):
-    parent.append(NoEscape(r"\\"))
-    parent.append(Command('href', arguments=Arguments(tag.text, tag['href'])))
+    text = tag.text.strip()
+    if not text or text == tag['href']:
+        parent.append(Command('url', tag['href']))
+    else:
+        parent.append(Command('href', arguments=Arguments(tag['href'], text)))
 
 @tag_handler('img')
 def img(parent, tag):
     imgpath = str(download_image(tag['src']))
     if imgpath is None:
         return
-    figure = Figure()
-    figure.add_image(imgpath, width=NoEscape(r'\linewidth'))
-    parent.append(figure)
+    with parent.create(Figure(position='H')) as figure:
+        figure.add_image(imgpath, width=NoEscape(r'\linewidth'))
 
-@tag_handler('em')
-def footnote(parent, tag):
-    newsoup = Bs('', 'lxml')
+@tag_handler('u')
+def underline(parent, tag):
+    text = tag.text.strip()
+    if text:
+        parent.append(f'\\underline{text}')
+
+@tag_handler('hr')
+def hr(parent, tag):
+    parent.append('\\hline')
+
+@tag_handler('ul')
+def items(parent, tag):
+    with parent.create(Itemize()) as itemize:
+        for li in tag.findAll('li'):
+            process_tag(itemize, li)
+
+@tag_handler('li')
+def item(parent, tag):
+    item_content = FlatContainer("par")
     for child in tag:
-        if child.name is None:
-            newtag = newsoup.new_tag(name='code')
-            newsoup.append(newtag)
-            newtag.append(child)
-            child = newtag
-            print(child)
-        process_tag(parent, child)
-
+        process_tag(item_content, child)
+    parent.add_item(item_content)
 
 def process_html(doc, htmlfile):
     h2counter = 0
@@ -191,14 +248,25 @@ def process_html(doc, htmlfile):
         if tag.name is not None:
             if tag.name == 'h2':
                 h2counter += 1
-            if DEBUG and h2counter > 2:
+            if DEBUG and h2counter > 6:
                 return
             process_tag(doc, tag)
         elif tag.string.strip():
             print('debug:', tag.string.strip())
 
 def main():
-    doc = HabrBook()
+    geometry_options = {
+        "paperwidth": "4.6in",
+        "paperheight": "6.2in",
+        "top": "0.5cm",
+        "margin": "0.5cm",
+        "bottom": "15pt",
+        "includefoot": True
+    }
+    doc = HabrBook(
+        fontenc="T2A",
+        inputenc=None,
+        geometry_options=geometry_options)
     process_html(doc, 'flask.html')
     doc.generate_tex('test')
     with open('test.tex', 'r+') as texfile:
