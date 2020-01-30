@@ -18928,6 +18928,21 @@ def internal_error(error):
     if wants_json_response():
         return api_error_response(500)
     return render_template('errors/500.html'), 500</code></pre>
+   <p>
+    Вспомогательная функция
+    <code>
+     wants_json_response()
+    </code>
+    сравнивает предпочтения для JSON или HTML, выбранные клиентом в списке предпочтительных форматов. Если скорость JSON выше, чем HTML, то я возвращаю ответ JSON. В противном случае я верну исходные HTML-ответы на основе шаблонов. Для ответов JSON я собираюсь импортировать вспомогательную функцию
+    <code>
+     error_response
+    </code>
+    из схемы элементов API, но здесь я собираюсь переименовать ее в
+    <code>
+     api_error_response()
+    </code>
+    , чтобы было ясно, что она делает и откуда.
+   </p>
   </div>
  </body>
 </html>

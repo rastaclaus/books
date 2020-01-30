@@ -7,9 +7,14 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup as Bs
 
-from pylatex import Document, Section, Subsection, Figure, SubFigure, Itemize
+from pylatex import (
+        Document, Section, Subsection,
+        Subsubsection, Figure, SubFigure,
+        LongTabu, Itemize)
+
 from pylatex.base_classes import (
         Environment, Arguments, ContainerCommand, Command)
+
 from pylatex.package import Package
 from pylatex.utils import NoEscape, bold, escape_latex
 
@@ -22,6 +27,10 @@ MEDIA='media'
 DEBUG = True
 
 RUALPHA = re.compile('[А-Яа-я]')
+PUNCT = re.compile(r'\s+([\?\!\.\,\:\)])')
+PUNCT_ADD = re.compile(r'([\(])\s+')
+QUOT = re.compile(r"'\s+(\S+)\s+'")
+LONGWORDS = re.compile(r'[^\s\\\_$\/\-\.]{30,}')
 
 
 LST_COMMANDS = NoEscape(
@@ -32,7 +41,7 @@ LST_COMMANDS = NoEscape(
     "\tbreaklines=true,\n"
     "\tinputencoding=utf8,\n"
     "\textendedchars=true,\n"
-    "\tescapeinside={\\%*}{*)},\n"
+    "%\tescapeinside={\\%*}{*)},\n"
     "}\n"
 )
 
@@ -48,13 +57,13 @@ PG_COMMANDS = NoEscape(
     "\\newfontfamily{\\cyrillicfontrm}{Times New Roman}\n"
     "\\newfontfamily{\\cyrillicfonttt}{Source Code Pro}\n"
     "\\newfontfamily{\\cyrillicfontsf}{Arial}\n"
-    "\\emergencystretch=25pt\n"
+    "\\emergencystretch=35pt\n"
 )
 
 GLOSSARY = {
         'p': 'par',
         'em': 'emph',
-        'blockquote': 'emph'}
+        'blockquote': 'par'}
 
 class Lstlisting(Environment):
     content_separator = '\n'
@@ -82,6 +91,20 @@ class FlatContainer(ContainerCommand):
             result += '}%\n'
         return result
 
+class InlineFormatContainer(FlatContainer):
+    def dumps(self):
+        content = self.dumps_content()
+        if not content.strip():
+            return ''
+        result = ''
+        start = Command(self.latex_name, arguments=self.arguments, options=self.options)
+        result += start.dumps() + '|'
+        if content != '':
+            result += content + '|'
+        else:
+            result += '|'
+        return result
+
 
 class HabrBook(Document):
     packages = [
@@ -107,12 +130,21 @@ def tag_handler(name):
         return decorate
     return handle
 
+
+def shrink_long_words(text):
+    longs = LONGWORDS.findall( text)
+    for longw in longs:
+        lw_len = len(longw)
+        text = text.replace(
+            longw,
+            longw[:lw_len//2] + "...")
+    return text
+
+
 def process_string(parent, tag):
     text = tag.string.strip()
-    if not parent._latex_name == 'document' and not check_cyrillic(text):
-        parent.append(NoEscape(f"\\begin{{english}}escape_latex({text})\\end{{english}}"))
-    else:
-        parent.append(text)
+    text = shrink_long_words(text)
+    parent.append(text)
 
 def process_tag(parent, tag):
     if tag.name is None:
@@ -124,12 +156,11 @@ def process_tag(parent, tag):
         handler(parent, tag)
     else:
         print('unknown tag:', tag.name)
-        print(tag)
 
 
 def download_image(image_url):
     media = Path(MEDIA)
-    if not(media.exists()):
+    if not media.exists():
         media.mkdir()
 
     imgfile = image_url.split('/')[-1]
@@ -154,6 +185,10 @@ def h2(doc, tag):
 @tag_handler('h3')
 def h3(doc, tag):
     doc.append(Subsection(tag.text.strip(), label=False))
+
+@tag_handler('h4')
+def h4(doc, tag):
+    doc.append(Subsubsection(tag.text.strip(), label=False))
 
 @tag_handler('em')
 @tag_handler('p')
@@ -187,9 +222,8 @@ def code(parent, tag):
         if check_cyrillic(text):
             parent.append(bold(text))
         else:
-            #parent.append(NoEscape(f"\\lstinline|{text}|"))
-            #parent.append(NoEscape(f"\\begin{{english}}\\texttt{{{escape_latex(text)}}}\\end{{english}}"))
-            parent.append(NoEscape(f"\\begin{{english}}\\lstinline|{text}|\\end{{english}}"))
+            parent.append(
+                InlineFormatContainer('lstinline', data=[NoEscape(text)]))
 
 @tag_handler('div')
 def div(parent, tag):
@@ -197,6 +231,7 @@ def div(parent, tag):
         process_tag(parent, child)
 
 @tag_handler('strong')
+@tag_handler('b')
 def strong(parent, tag):
     parent.append(bold(tag.text.strip()))
 
@@ -204,9 +239,9 @@ def strong(parent, tag):
 def href(parent, tag):
     text = tag.text.strip()
     if not text or text == tag['href']:
-        parent.append(Command('url', tag['href']))
+        parent.append(Command('url', shrink_long_words(text)))
     else:
-        parent.append(Command('href', arguments=Arguments(tag['href'], text)))
+        parent.append(Command('href', arguments=Arguments(NoEscape(tag['href']), text)))
 
 @tag_handler('img')
 def img(parent, tag):
@@ -239,6 +274,28 @@ def item(parent, tag):
         process_tag(item_content, child)
     parent.add_item(item_content)
 
+@tag_handler('table')
+def table(parent, tag):
+    """
+    for very simple flat table!
+    """
+    cols = tag.thead.tr.findAll('th')
+    tabu_head = 'X[l m]' + " ".join(['X[j m]'  for _ in cols[1:]])
+    with parent.create(LongTabu(tabu_head)) as data_table:
+        header_row = [col.text.strip() for col in cols]
+        data_table.add_row(header_row, mapper=[bold])
+        data_table.add_hline()
+        data_table.end_table_header()
+    for trow in tag.tbody.findAll('tr'):
+        row = []
+        for tcol in trow.findAll('td'):
+            col = FlatContainer('small')
+            for child in tcol:
+                process_tag(col, child)
+            row.append(col)
+        data_table.add_row(row)
+        data_table.add_hline()
+
 def process_html(doc, htmlfile):
     h2counter = 0
     with open(htmlfile) as html:
@@ -248,8 +305,8 @@ def process_html(doc, htmlfile):
         if tag.name is not None:
             if tag.name == 'h2':
                 h2counter += 1
-            if DEBUG and h2counter > 6:
-                return
+                if DEBUG and h2counter > 24:
+                    return
             process_tag(doc, tag)
         elif tag.string.strip():
             print('debug:', tag.string.strip())

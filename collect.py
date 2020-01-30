@@ -42,7 +42,7 @@ def shift_headers(soup, post):
         new_header.append(header.text)
         header.replace_with(new_header)
 
-def strip_post(soup, post):
+def strip_post(soup, post, last_post=False):
     children = post.find_all_next()
     for child in children:
         if child.name:
@@ -51,14 +51,16 @@ def strip_post(soup, post):
                 break
             child.decompose()
 
-    p_tag = post.find_all('p')[-1]
-    p_tag.decompose()
+    if not last_post:
+        p_tag = post.find_all('p')[-1]
+        p_tag.decompose()
     for br_tag in post.find_all('br'):
         br_tag.decompose()
     shift_headers(soup, post)
 
 
 def main():
+    #TODO dict unneed!
     url = URL
     soup = get_soup(url)
     post = copy.copy(soup.find(id='post-content-body'))
@@ -72,11 +74,15 @@ def main():
     h1_tag = soup.new_tag('h1')
     h1_tag.append('Мега учебник Flask')
     soup.html.body.append(h1_tag)
+    # dirty fix
+    last=False
     for link, title_text in toc.items():
         print(title_text)
+        if "23" in title_text:
+            last = True
         page = get_soup(link)
         post = copy.copy(page.find(id='post-content-body'))
-        strip_post(soup, post)
+        strip_post(soup, post, last)
         h2_tag = soup.new_tag('h2')
         h2_tag.append(title_text)
         soup.html.body.append(h2_tag)
