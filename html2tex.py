@@ -324,7 +324,7 @@ def main():
         fontenc="T2A",
         inputenc=None,
         geometry_options=geometry_options)
-    process_html(doc, 'flask.html')
+    process_html(doc, 'react.html')
     doc.generate_tex('test')
     with open('test.tex', 'r+') as texfile:
         text = '% TEX program = xelatex\n' + texfile.read()

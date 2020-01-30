@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
-URL = 'https://habrahabr.ru/post/346306/'
+URL = 'https://habr.com/ru/post/309958/'
 HEADERS = re.compile('^h[1-6]$')
 
 def get_fname(url):
@@ -64,15 +64,15 @@ def main():
     url = URL
     soup = get_soup(url)
     post = copy.copy(soup.find(id='post-content-body'))
-    toc = {url: 'Глава 1. Привет, Мир!'}
-    toc.update(get_table_of_content(post))
+    toc = {url: 'React.js: собираем с нуля изоморфное / универсальное приложение. Часть 1: собираем стек'}
+    # toc.update(get_table_of_content(post))
     for script_tag in soup.html.head.find_all(name='script'):
         script_tag.decompose()
     body = soup.html.body
     body.decompose()
     soup.html.append(soup.new_tag("body"))
     h1_tag = soup.new_tag('h1')
-    h1_tag.append('Мега учебник Flask')
+    h1_tag.append('React.js: собираем стек')
     soup.html.body.append(h1_tag)
     # dirty fix
     last=False
@@ -88,7 +88,7 @@ def main():
         soup.html.body.append(h2_tag)
         soup.html.body.append(post)
 
-    with open('flask.html', 'wb') as new_html:
+    with open('react.html', 'wb') as new_html:
         new_html.write(soup.prettify('utf-8'))
 
 if __name__ == '__main__':
